@@ -15,6 +15,7 @@ import torch
 from PIL import Image, ImageDraw
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from activation_doom.activation import activation_frame, predict_activation_frame, prediction_loss_space, target_loss_space
 from activation_doom.preprocess import save_target, target_gray
 
 
@@ -42,15 +43,6 @@ def load_frozen(model_name: str, device: torch.device):
     model.eval()
     model.requires_grad_(False)
     return tokenizer, model
-
-
-def activation_frame(hidden: torch.Tensor, width: int, height: int) -> torch.Tensor:
-    """Flatten a hidden-state tensor and reshape its first values into a framebuffer."""
-    need = width * height
-    flat = hidden.reshape(-1)
-    if flat.numel() < need:
-        raise ValueError(f"activation has {flat.numel()} values, need {need}")
-    return flat[:need].reshape(height, width)
 
 
 def image_uint8(values) -> np.ndarray:
@@ -154,46 +146,48 @@ def model_metadata(model, device: torch.device, layer: int) -> dict:
     }
 
 
-def predict_activation_frame(model, soft: torch.Tensor, mask: torch.Tensor, layer: int, width: int, height: int) -> torch.Tensor:
-    """Run a soft prompt through the frozen model and return the selected activation framebuffer."""
-    outputs = model(
-        inputs_embeds=soft,
-        attention_mask=mask,
-        output_hidden_states=True,
-        use_cache=False,
-        return_dict=True,
-    )
-    return activation_frame(outputs.hidden_states[layer], width, height)
-
-
-def fit_target(args: argparse.Namespace, tokenizer, model, device: torch.device, target: np.ndarray, out: Path, label: str) -> dict:
+def fit_target(
+    args: argparse.Namespace,
+    tokenizer,
+    model,
+    device: torch.device,
+    target: np.ndarray,
+    out: Path,
+    label: str,
+    normalization: tuple[float, float] | None = None,
+) -> dict:
     """Optimize one soft prompt so a frozen-model activation framebuffer matches a target image."""
     set_seed(args.seed)
     if torch.cuda.is_available() and device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
 
-    target_t = torch.tensor(target * 2.0 - 1.0, dtype=torch.float32, device=device)
+    target_t = target_loss_space(torch.tensor(target, dtype=torch.float32, device=device))
     before = parameter_hash(model)
     emb = model.get_input_embeddings().weight.detach()
     soft = torch.nn.Parameter(
         torch.randn(1, args.prompt_tokens, emb.shape[1], device=device) * emb.float().std().to(device)
         + emb.float().mean().to(device)
     )
+    initial_soft_prompt_norm = float(soft.detach().norm().item())
     opt = torch.optim.Adam([soft], lr=args.lr)
-    mask = torch.ones(1, args.prompt_tokens, device=device)
-
     with torch.no_grad():
-        initial_raw = predict_activation_frame(model, soft, mask, args.layer, args.width, args.height)
-        mean = initial_raw.mean().detach()
-        std = initial_raw.std().clamp_min(1e-6).detach()
-        initial_loss = torch.nn.functional.mse_loss((initial_raw - mean) / std, target_t).item()
+        initial_raw = predict_activation_frame(model, soft, args.layer, args.width, args.height)[0]
+        if normalization is None:
+            mean = initial_raw.mean().detach()
+            std = initial_raw.std().clamp_min(1e-6).detach()
+            normalization_label = "fixed mean/std from initial activation frame"
+        else:
+            mean = torch.tensor(normalization[0], device=device)
+            std = torch.tensor(normalization[1], device=device)
+            normalization_label = "global fixed activation calibration"
+        initial_loss = torch.nn.functional.mse_loss(prediction_loss_space(initial_raw, mean, std), target_t).item()
     save_gray(out / "initial_activation.png", initial_raw)
 
     losses: list[float] = []
     first_grad_norm = None
     for _ in range(args.steps):
         opt.zero_grad(set_to_none=True)
-        pred = (predict_activation_frame(model, soft, mask, args.layer, args.width, args.height) - mean) / std
+        pred = prediction_loss_space(predict_activation_frame(model, soft, args.layer, args.width, args.height)[0], mean, std)
         loss = torch.nn.functional.mse_loss(pred, target_t)
         loss.backward()
         grad_norm = float(soft.grad.detach().norm().item())
@@ -203,10 +197,10 @@ def fit_target(args: argparse.Namespace, tokenizer, model, device: torch.device,
         losses.append(float(loss.detach().item()))
 
     with torch.no_grad():
-        final_raw = predict_activation_frame(model, soft, mask, args.layer, args.width, args.height)
-        final_loss_space = (final_raw - mean) / std
+        final_raw = predict_activation_frame(model, soft, args.layer, args.width, args.height)[0]
+        final_loss_space = prediction_loss_space(final_raw, mean, std)
         final_loss = torch.nn.functional.mse_loss(final_loss_space, target_t).item()
-        shape = list(model(inputs_embeds=soft, attention_mask=mask, output_hidden_states=True, use_cache=False, return_dict=True).hidden_states[args.layer].shape)
+        shape = list(model(inputs_embeds=soft, attention_mask=torch.ones(soft.shape[:2], device=device), output_hidden_states=True, use_cache=False, return_dict=True).hidden_states[args.layer].shape)
 
     save_loss_gray(out / "final_loss_space.png", final_loss_space)
     save_gray(out / "final_display.png", final_raw)
@@ -229,13 +223,17 @@ def fit_target(args: argparse.Namespace, tokenizer, model, device: torch.device,
         "seed": args.seed,
         "steps": args.steps,
         "learning_rate": args.lr,
-        "loss_normalization": "fixed mean/std from initial activation frame",
+        "loss_normalization": normalization_label,
+        "activation_mean": float(mean.item()),
+        "activation_std": float(std.item()),
         "loss_space_image_scale": "fixed [-1, 1] mapped to [0, 255]",
         "visualization_normalization": "per-image min-max only",
         "initial_loss": initial_loss,
         "final_loss": final_loss,
         "loss_decreased": final_loss < initial_loss,
         "first_soft_prompt_grad_norm": first_grad_norm,
+        "initial_soft_prompt_norm": initial_soft_prompt_norm,
+        "final_soft_prompt_norm": float(soft.detach().norm().item()),
         "model_parameter_hash_unchanged": before == after,
         "cuda_peak_memory_mb": (
             float(torch.cuda.max_memory_allocated(device) / 1024**2)
@@ -289,7 +287,7 @@ def run_viewer(args: argparse.Namespace) -> Path:
         outputs = model(**tokens, output_hidden_states=True, use_cache=False, return_dict=True)
 
     hidden = outputs.hidden_states[args.layer]
-    frame = activation_frame(hidden, args.width, args.height)
+    frame = activation_frame(hidden, args.width, args.height)[0]
     save_gray(out / "activation.png", frame)
 
     meta = model_metadata(model, device, args.layer) | {
