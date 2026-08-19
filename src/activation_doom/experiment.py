@@ -15,6 +15,8 @@ import torch
 from PIL import Image, ImageDraw
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from activation_doom.preprocess import save_target, target_gray
+
 
 def set_seed(seed: int) -> None:
     """Seed Python, NumPy, and PyTorch for repeatable experiment runs."""
@@ -254,8 +256,7 @@ def fit_target(args: argparse.Namespace, tokenizer, model, device: torch.device,
 
 def resize_gray(image: Image.Image | np.ndarray, width: int, height: int) -> np.ndarray:
     """Convert an image to grayscale, resize it, and return float values in [0, 1]."""
-    img = image if isinstance(image, Image.Image) else Image.fromarray(image)
-    return np.asarray(img.convert("L").resize((width, height), Image.Resampling.BILINEAR), dtype=np.float32) / 255.0
+    return target_gray(image, width, height)
 
 
 def capture_doom_frame(seed: int):
@@ -326,7 +327,7 @@ def run_doom(args: argparse.Namespace) -> Path:
     original = capture_doom_frame(args.frame_seed)
     Image.fromarray(original, mode="RGB").save(out / "original_doom_frame.png")
     target = resize_gray(original, args.width, args.height)
-    save_gray(out / "resized_grayscale_target.png", target)
+    save_target(out / "resized_grayscale_target.png", target)
 
     device = device_for(args.device)
     tokenizer, model = load_frozen(args.model, device)
