@@ -8,7 +8,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from activation_doom.activation import ActivationConfig
-from activation_doom.dashboard import ACCENT, BG, EDGE, MUTED, PANEL, TEXT, ReplayApp, font, heatmap
+from activation_doom.dashboard import BG, EDGE, MUTED, PANEL, TEXT, TOKEN_COLORS, ReplayApp, font, heatmap
 from activation_doom.experiment import loss_space_uint8
 
 
@@ -51,13 +51,19 @@ def compose_presentation(
         raise ValueError(f"presentation expects hidden [4,768] and raw [32,64], got {hidden.shape} and {raw.shape}")
     low, high = config.activation_mean - 3 * config.activation_std, config.activation_mean + 3 * config.activation_std
     phase = (int(row.get("sequence", 0)) % 30) / 29.0
+    selected_x, selected_y = 32, 16
+    selected_flat = selected_y * config.width + selected_x
+    selected_token, selected_dimension = divmod(selected_flat, config.hidden_size)
+    selected_raw = float(raw[selected_y, selected_x])
+    selected_loss = float(prediction[selected_y, selected_x])
+    selected_uint8 = int(loss_space_uint8(np.asarray([[selected_loss]]))[0, 0])
     canvas = Image.new("RGB", SIZE, BG)
     draw = ImageDraw.Draw(canvas)
 
-    draw.text((55, 38), "HOW DOOM-GPT DRAWS WITH TRANSFORMER ACTIVATIONS", font=font(34, True), fill=TEXT)
+    draw.text((55, 38), "THESE PIXELS ARE GPT INTERNAL HIDDEN-STATE VALUES", font=font(34, True), fill=TEXT)
     draw.text(
         (58, 94),
-        "A real ViZDoom frame becomes a soft prompt for a frozen transformer. Its hidden-state values become the pixels you see.",
+        "GPT logits are ignored. We copy 2,048 values from hidden_states[3] directly into a 32 x 64 framebuffer.",
         font=font(18),
         fill=MUTED,
     )
@@ -73,8 +79,8 @@ def compose_presentation(
 
     left, center, right = (50, 180, 550, 925), (650, 145, 1270, 950), (1370, 180, 1870, 925)
     card(draw, left, "REAL DOOM INPUT", "01")
-    card(draw, center, "DOOM-GPT", "02")
-    card(draw, right, "ACTIVATIONS AS FRAME", "03")
+    card(draw, center, "DOOM-GPT INTERNALS", "02")
+    card(draw, right, "HIDDEN VALUES -> PIXELS", "03")
     arrow(draw, (565, 545), (635, 545), "ENCODE", phase)
     arrow(draw, (1285, 545), (1355, 545), "RESHAPE", phase)
 
@@ -110,12 +116,18 @@ def compose_presentation(
     draw.line((960, 360, 960, 395), fill=(99, 113, 135), width=3)
     draw.polygon(((960, 405), (950, 391), (970, 391)), fill=(99, 113, 135))
     draw.rounded_rectangle((680, 405, 1240, 725), 14, fill=(15, 20, 28), outline=(82, 93, 110), width=2)
-    draw.text((705, 425), "FROZEN DISTILGPT2  |  HIDDEN STATE 3", font=font(17, True), fill=CYAN)
-    draw.text((705, 458), "96 representative neurons of the actual 3,072 activations", font=font(12), fill=MUTED)
+    draw.text((705, 425), "FROZEN DISTILGPT2 INTERNALS", font=font(17, True), fill=CYAN)
+    draw.text((705, 455), "outputs.logits", font=font(12, True), fill=MUTED)
+    draw.text((855, 455), "IGNORED  (not used as an image)", font=font(12, True), fill=ORANGE)
+    draw.text((705, 478), "outputs.hidden_states[3]", font=font(12, True), fill=TEXT)
+    draw.text((935, 478), "USED AS PIXELS", font=font(12, True), fill=GREEN)
+    draw.text((705, 501), "96 representative neurons of the actual 3,072 internal values", font=font(11), fill=MUTED)
     dimensions = np.linspace(0, 767, 24, dtype=int)
+    dimensions[np.argmin(np.abs(dimensions - selected_dimension))] = selected_dimension
+    dimensions.sort()
     colors = heatmap(hidden[:, dimensions], low, high)
     for token in range(4):
-        y = 520 + token * 46
+        y = 548 + token * 38
         draw.text((705, y - 7), f"T{token}", font=font(12, True), fill=TEXT if token < 3 else MUTED)
         for column, dimension in enumerate(dimensions):
             x = 755 + column * 19
@@ -123,24 +135,51 @@ def compose_presentation(
             if token == 3 or (token == 2 and dimension >= 512):
                 color = tuple(int(value * 0.25) for value in color)
             draw.ellipse((x - 6, y - 6, x + 6, y + 6), fill=color)
-    draw.text((705, 692), "bright = positive   |   blue = negative   |   dimmed = not selected for pixels", font=font(11), fill=MUTED)
+            if token == selected_token and dimension == selected_dimension:
+                draw.rectangle((x - 10, y - 10, x + 10, y + 10), outline=ORANGE, width=3)
+    draw.text((705, 700), "orange box = the exact internal neuron traced to the output pixel", font=font(11, True), fill=ORANGE)
 
-    full_heatmap = Image.fromarray(heatmap(hidden, low, high), mode="RGB").resize((520, 86), Image.Resampling.NEAREST)
+    hidden_rgb = heatmap(hidden, low, high)
+    used = np.arange(hidden.size).reshape(hidden.shape) < config.width * config.height
+    hidden_rgb[~used] = (hidden_rgb[~used].astype(np.float32) * 0.18).astype(np.uint8)
+    full_heatmap = Image.fromarray(hidden_rgb, mode="RGB").resize((520, 86), Image.Resampling.NEAREST)
     canvas.paste(full_heatmap, (700, 760))
     draw.rectangle((699, 759, 1221, 847), outline=(82, 93, 110), width=2)
-    draw.text((700, 862), "H = hidden_state[3]  [4 x 768]  |  every color is a real activation value", font=font(12), fill=TEXT)
+    row_height = 86 // 4
+    draw.rectangle((700, 760, 1219, 760 + row_height), outline=tuple(TOKEN_COLORS[0]), width=2)
+    draw.rectangle((700, 760 + row_height, 1219, 760 + row_height * 2), outline=tuple(TOKEN_COLORS[1]), width=2)
+    token_two_end = 700 + 512 * 520 // 768
+    draw.rectangle((700, 760 + row_height * 2, token_two_end, 760 + row_height * 3), outline=tuple(TOKEN_COLORS[2]), width=2)
+    hidden_x = 700 + selected_dimension * 520 // 768
+    hidden_y = 760 + selected_token * 86 // 4
+    draw.rectangle((hidden_x - 3, hidden_y, hidden_x + 3, hidden_y + row_height), outline=ORANGE, width=2)
+    draw.text((700, 862), "COLORED OUTLINES = flatten(H)[:2048] copied to pixels; dimmed values are not copied", font=font(11, True), fill=TEXT)
     draw.text((810, 907), "GPT WEIGHTS STAY FROZEN", font=font(15, True), fill=GREEN)
 
+    draw.text((1410, 250), "RAW GPT INTERNAL VALUES  (NOT LOGITS)", font=font(14, True), fill=CYAN)
     raw_image = Image.fromarray(heatmap(raw, low, high), mode="RGB").resize((420, 160), Image.Resampling.NEAREST)
     canvas.paste(raw_image, (1410, 285))
     draw.rectangle((1409, 284, 1831, 446), outline=(82, 93, 110), width=2)
-    draw.text((1410, 462), "flatten(H)[:2048]  ->  raw [32 x 64] framebuffer", font=font(13), fill=MUTED)
-    draw.line((1620, 500, 1620, 535), fill=(99, 113, 135), width=3)
-    draw.polygon(((1620, 545), (1610, 531), (1630, 531)), fill=(99, 113, 135))
+    for token, (first_row, rows) in enumerate(((0, 12), (12, 12), (24, 8))):
+        y0, y1 = 285 + first_row * 5, 285 + (first_row + rows) * 5
+        draw.rectangle((1410, y0, 1830, y1), outline=tuple(TOKEN_COLORS[token]), width=3)
+        draw.text((1383, y0 + 4), f"T{token}", font=font(10, True), fill=tuple(TOKEN_COLORS[token]))
+    raw_x0 = 1410 + selected_x * 420 // 64
+    raw_y0 = 285 + selected_y * 160 // 32
+    draw.rectangle((raw_x0, raw_y0, raw_x0 + 7, raw_y0 + 6), outline=ORANGE, width=3)
+    draw.text((1410, 458), "EXACT COPY PROOF", font=font(12, True), fill=ORANGE)
+    draw.text((1410, 477), f"H[{selected_token},{selected_dimension}] = {selected_raw:+.6f}", font=font(12, True), fill=TEXT)
+    draw.text((1410, 496), f"flat[{selected_flat}] -> F[{selected_y},{selected_x}] = {selected_raw:+.6f}  (same float)", font=font(11, True), fill=TEXT)
+    draw.text((1410, 515), f"fixed display mapping -> grayscale pixel {selected_uint8}/255", font=font(11), fill=MUTED)
+    draw.line((1620, 535, 1620, 548), fill=ORANGE, width=3)
+    draw.polygon(((1620, 558), (1610, 544), (1630, 544)), fill=ORANGE)
     final = Image.fromarray(loss_space_uint8(prediction), mode="L").convert("RGB").resize((420, 315), Image.Resampling.NEAREST)
     canvas.paste(final, (1410, 560))
     draw.rectangle((1409, 559, 1831, 876), outline=ORANGE, width=3)
-    draw.text((1410, 892), "fixed normalization + nearest upscale", font=font(13), fill=TEXT)
+    final_x0 = 1410 + selected_x * 420 // 64
+    final_y0 = 560 + selected_y * 315 // 32
+    draw.rectangle((final_x0, final_y0, final_x0 + 7, final_y0 + 11), outline=ORANGE, width=3)
+    draw.text((1410, 892), "DISPLAY OF F  |  fixed normalization + nearest upscale", font=font(13, True), fill=TEXT)
 
     draw.rounded_rectangle((50, 975, 1870, 1045), 14, fill=(23, 29, 39), outline=EDGE, width=2)
     draw.text((85, 991), "H = hidden_state[3]", font=font(18, True), fill=CYAN)
@@ -148,7 +187,7 @@ def compose_presentation(
     draw.text((440, 991), "P = flatten(H)[:2048]", font=font(18, True), fill=CYAN)
     draw.text((810, 991), "->", font=font(18, True), fill=ORANGE)
     draw.text((865, 991), "F = reshape(P, 32, 64)", font=font(18, True), fill=CYAN)
-    draw.text((1290, 991), "NO DECODER  •  NO GPT WEIGHT UPDATES", font=font(16, True), fill=GREEN)
+    draw.text((1250, 991), "COPY, NOT DECODE  |  LOGITS IGNORED  |  GPT FROZEN", font=font(15, True), fill=GREEN)
     draw.text(
         (85, 1021),
         f"MSE {_number(row.get('spatial_mse'), 6)}   |   prompt norm {_number(row.get('prompt_norm'), 1)}   |   renderer {_number(row.get('renderer_only_ms'), 2)} ms",

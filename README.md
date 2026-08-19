@@ -1,20 +1,20 @@
-# ActivationDoom: DOOM Rendered in GPT Activations
+# DOOM-GPT: DOOM Rendered in GPT Internal Activations
 
 ![ActivationDoom presentation demo](docs/assets/activation_doom_demo.gif)
 
-## What I wanted to accomplish
+## Can it run Doom? LLM internal activations
 
-I wanted to answer a deliberately strange question:
 
-> Can a real DOOM frame be represented directly by the internal activations
-> of a frozen GPT, then displayed by reshaping those activation values into
-> pixels?
+This repository is a real playable DOOM game rendered entirely from the internal activations of a frozen LLM.
 
-The claim is **DOOM rendered in transformer activations**—not DOOM running on
-transformer weights. ViZDoom still supplies the game simulation and the real
-input frame. A small image encoder turns that frame into four continuous prompt
-tokens, a frozen DistilGPT2 processes those tokens, and values from one internal
-hidden state become the displayed framebuffer.
+The basic idea is:
+1) provide specific input
+2) The input will activate specific neurons in the LLM
+3) The actual values of those neurons form a frame in the game
+4) Stream inputs to the LLM to render the game in real time
+5) Ignore the actual output, who cares about the text? we only care about the internals.
+
+This is a DS \ AI approach, I did not implement any game logic or graphics geometry due to lack of knowledge and uncertainty about hypothesis weather or not internal activations are locally correlated or can act as an environment.
 
 ```text
 real ViZDoom frame
@@ -63,16 +63,17 @@ image-to-soft-prompt encoder.
 
 ## Milestones
 
-| Milestone | What changed | Result |
-| --- | --- | --- |
-| **1. Activation viewer** | Loaded frozen DistilGPT2, captured hidden states, and reshaped a deterministic activation slice. | Confirmed hidden shape `[1,4,768]` and produced the first activation framebuffer. |
-| **2. Synthetic inversion** | Optimized only a four-token soft prompt so the activation framebuffer matched a simple image. | Loss fell from `1.965` to `0.663`; transformer hash stayed unchanged. |
-| **3. Real DOOM frame** | Replaced the synthetic target with one real ViZDoom frame. | Three seeds visibly recovered the wall/floor split and weapon; best final MSE was `0.131`. |
-| **4. ViZDoom dataset** | Collected split-safe gameplay data from `deathmatch.cfg`. | Generated and validated 25,000 varied frames across 84 episodes. |
-| **5. Amortized renderer** | Trained a small CNN encoder to produce a soft prompt for each frame. | Test MSE `0.00603`; renderer-only batch-1 latency about `2.53 ms`; GPT stayed frozen. |
-| **6. Live playable pipeline** | Connected ViZDoom, the encoder, frozen GPT, and activation framebuffer at game-tic speed. | Recorded activation-only play at roughly 35 FPS, with temporal and integrity metrics. |
-| **7. Provenance dashboard** | Added synchronized hidden-state, raw-slice, source-token, metrics, and pixel-inspection panels. | Verified replay frames reproduced their stored activation displays byte-for-byte. |
-| **8. Presentation demo** | Added a separate 16:9 visual story showing input, real neurons/activations, and the resulting frame. | Produces the GIF above plus 1920x1080 screenshots from the recorded session. |
+| Milestone                         | What changed                                                                                                                       | Result                                                                                     |
+|-----------------------------------|------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------|
+| **1. Activation viewer**          | Loaded frozen DistilGPT2, captured hidden states, and reshaped a deterministic activation slice.                                   | Confirmed hidden shape `[1,4,768]` and produced the first activation framebuffer.          |
+| **2. Synthetic inversion**        | Optimized only a four-token soft prompt so the activation framebuffer matched a simple image.                                      | Loss fell from `1.965` to `0.663`; transformer hash stayed unchanged.                      |
+| **3. Real DOOM frame**            | Replaced the synthetic target with one real ViZDoom frame.                                                                         | Three seeds visibly recovered the wall/floor split and weapon; best final MSE was `0.131`. |
+| **4. ViZDoom dataset**            | Collected split-safe gameplay data from `deathmatch.cfg`.                                                                          | Generated and validated 25,000 varied frames across 84 episodes.                           |
+| **5. Amortized renderer**         | Trained a small CNN encoder to produce a soft prompt for each frame.                                                               | Test MSE `0.00603`; renderer-only batch-1 latency about `2.53 ms`; GPT stayed frozen.      |
+| **6. Live playable pipeline**     | Connected ViZDoom, the encoder, frozen GPT, and activation framebuffer at game-tic speed.                                          | Recorded activation-only play at roughly 35 FPS, with temporal and integrity metrics.      |
+| **7. Provenance dashboard**       | Added synchronized hidden-state, raw-slice, source-token, metrics, and pixel-inspection panels.                                    | Verified replay frames reproduced their stored activation displays byte-for-byte.          |
+| **8. Presentation demo**          | Added a separate 16:9 visual story showing input, real neurons/activations, and the resulting frame.                               | Produces the GIF above plus 1920x1080 screenshots from the recorded session.               |
+| **9. No VizDoom, No fake frames** | Let the encoder learn a state of the game instead of the frame, then use it to drop VizDoom completely and form the real DOOM-GPT! | In-Progress                                                                                |
 
 Detailed experiment decisions, measurements, and limitations are recorded in
 [`docs/EXECPLAN.md`](docs/EXECPLAN.md).
@@ -201,14 +202,14 @@ below `data/`.
   cannot manufacture temporal structure.
 - Checkpoint and transformer hashes are verified before live playback.
 
-## What this does not claim
+## Future work
 
-The game logic is not running inside GPT. ViZDoom advances the world and
-provides each source frame. This project investigates whether a frozen
-transformer's controllable activation space can serve as a genuine visual
-representation—and whether a small encoder can reach that representation fast
-enough for live play.
+I am currently exploring a few direction to enhance the project and some research directions as well.
+Game enhancements:
+1) Use the rest of the hidden state to render higher resolution.
+2) Use the rest of the hidden state to render color frames.
+3) Multi Frane Generation: use other layers to generate the frame multiple time for upscaling
 
-The current image is only `64x32`, close enemies remain a difficult case, and
-the presentation replay is sampled every fifth recorded game tic. Those are
-experimental limitations, not hidden post-processing.
+Future research directions:
+1) Can latent space hold information about a state?
+2) Definition of regions in the input space that are locally correlated in the latent space.
