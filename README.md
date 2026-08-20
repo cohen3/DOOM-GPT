@@ -73,7 +73,8 @@ image-to-soft-prompt encoder.
 | **6. Live playable pipeline**     | Connected ViZDoom, the encoder, frozen GPT, and activation framebuffer at game-tic speed.                                          | Recorded activation-only play at roughly 35 FPS, with temporal and integrity metrics.      |
 | **7. Provenance dashboard**       | Added synchronized hidden-state, raw-slice, source-token, metrics, and pixel-inspection panels.                                    | Verified replay frames reproduced their stored activation displays byte-for-byte.          |
 | **8. Presentation demo**          | Added a separate 16:9 visual story showing input, real neurons/activations, and the resulting frame.                               | Produces the GIF above plus 1920x1080 screenshots from the recorded session.               |
-| **9. No VizDoom, No fake frames** | Let the encoder learn a state of the game instead of the frame, then use it to drop VizDoom completely and form the real DOOM-GPT! | In-Progress                                                                                |
+| **9. V2-A state dataset**         | Collected structured game state paired with same-tick targets, with no framebuffer data in model features.                         | Validated 25,000 pairs across 84 split-safe episodes for V2-B.                             |
+| **10. V2-B state renderer**       | Replaced image input with matched pose/global/Deep Sets state encoders while preserving the frozen GPT renderer.                    | C improved over globals-only B but not pose-only A on enemies; `NOT READY FOR V2-C`.       |
 
 Detailed experiment decisions, measurements, and limitations are recorded in
 [`docs/EXECPLAN.md`](docs/EXECPLAN.md).
@@ -164,7 +165,76 @@ Run the tests:
 & $py -m pytest -q
 ```
 
-Current verification: **26 tests passing**.
+Current verification: **36 tests passing**.
+
+## Build the V2-A structured state dataset
+
+V2-A removes framebuffer pixels from the future renderer input. ViZDoom still
+produces a `64x32` grayscale target during collection, but model features come
+only from game variables and structured world objects.
+
+```powershell
+& $py -m activation_doom.data.state collect --output data/vizdoom_state_smoke --frames 500 --max-entities 32 --seed 42 --overwrite
+& $py -m activation_doom.data.state validate data/vizdoom_state_smoke
+
+& $py -m activation_doom.data.state collect --output data/vizdoom_state_v2a --frames 25000 --max-entities 32 --seed 42 --overwrite
+& $py -m activation_doom.data.state analyze data/vizdoom_state_v2a
+```
+
+Each split contains a non-pickle `state.npz` with global features `[N,60]`,
+entity features `[N,32,11]`, type IDs, masks, and corresponding raw numeric
+arrays. `raw_states.jsonl.gz` preserves every structured world object.
+`feature_schema.json` documents each input field and `normalization.json`
+contains statistics fit only from training episodes. Actions are alignment
+metadata, not baseline model inputs; targets never enter feature construction.
+
+## Train the V2-B structured-state renderer
+
+V2-B replaces the image encoder with structured state while leaving the
+successful activation renderer unchanged:
+
+```text
+normalized game state
+        |
+        v
+global MLP + masked Deep Sets entities
+        |
+        v
+soft prompt [4,768]
+        |
+        v
+frozen DistilGPT2 hidden_state[3] [4,768]
+        |
+        v
+first 2,048 activations -> reshape [32,64]
+        |
+        v
+fixed V1-B loss-space normalization -> grayscale frame
+```
+
+The target PNG is loaded separately and used only to compute MSE after the
+activation frame exists. `StateEncoder.forward` has no image or target
+argument, A/B receive no entity tensors, and DistilGPT2 remains frozen.
+
+Run all A/B/C gates, training, and held-out evaluation:
+
+```powershell
+& $py -m activation_doom.state_renderer all `
+  --dataset data/vizdoom_state_v2a `
+  --out experiments/v2b_state_renderer/my-run
+```
+
+The completed reference run is under
+`experiments/v2b_state_renderer/20260820-structured-state/`. Its main report is
+`REPORT.md`, fixed target/A/B/C comparison is
+`comparison/qualitative_ablation.png`, and each model directory contains its
+checkpoints, curves, test distribution, worst 20 frames, and latency report.
+
+The reference result is `NOT READY FOR V2-C`: Model C test mean MSE was
+`0.02727` versus `0.02398` for pose-only A and `0.00603` for V1-B. C was fast
+at `2.63 ms` batch-1 mean latency, but it did not reliably reconstruct close or
+multiple enemies. See `docs/EXECPLAN.md` for the counter-extrapolation and
+missing-visibility findings.
 
 ## Reproduce earlier milestones
 
@@ -187,6 +257,9 @@ Current verification: **26 tests passing**.
 
 # Milestone 6: temporal, integrity, and stress evaluation
 & $py -m activation_doom.live evaluate
+
+# Milestone 10: structured-state A/B/C renderer experiment
+& $py -m activation_doom.state_renderer all --dataset data/vizdoom_state_v2a
 ```
 
 Experiment outputs are written below `experiments/`; datasets are written
@@ -213,3 +286,10 @@ Game enhancements:
 Future research directions:
 1) Can latent space hold information about a state?
 2) Definition of regions in the input space that are locally correlated in the latent space.
+
+## AI usage disclaimer
+I used Codex to implement some of the code in this repository including some of the text in this README.
+Mostly the things I did not know how to implement and I wanted to learn how to implement them.
+I also used ChatGPT to help with brainstorming some ideas and experiments.
+I did not use any AI to conduct the experiments or design the system.
+I did not use any AI to conduct the research.

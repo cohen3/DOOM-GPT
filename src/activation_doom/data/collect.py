@@ -33,8 +33,8 @@ def var_name(var) -> str:
     return getattr(var, "name", str(var).split(".")[-1])
 
 
-def make_game(config: str, seed: int):
-    """Create and initialize one seeded ViZDoom game instance."""
+def make_game(config: str, seed: int, game_variables=None, objects_info: bool = False):
+    """Create and initialize one seeded ViZDoom game instance with optional structured state."""
     import vizdoom as vzd
 
     game = vzd.DoomGame()
@@ -47,6 +47,9 @@ def make_game(config: str, seed: int):
     game.set_seed(seed)
     game.set_screen_format(vzd.ScreenFormat.RGB24)
     game.set_screen_resolution(vzd.ScreenResolution.RES_320X240)
+    if game_variables is not None:
+        game.set_available_game_variables(game_variables)
+    game.set_objects_info_enabled(objects_info)
     game.init()
     return game, str(cfg)
 
@@ -56,6 +59,7 @@ def action_vector(buttons: list[str], label: str, rng: random.Random) -> list[fl
     values = [0.0] * len(buttons)
 
     def set_button(name: str, value: float = 1.0) -> None:
+        """Set one available action button without failing on scenario omissions."""
         if name in buttons:
             values[buttons.index(name)] = value
 
