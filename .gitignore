@@ -1,0 +1,12 @@
+.idea/
+.venv/
+.venv*/
+.deps/
+.hf_cache/
+.mplconfig/
+.pytest_cache/
+_vizdoom.ini
+__pycache__/
+*.pyc
+/data/
+experiments/*/

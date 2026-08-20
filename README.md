@@ -14,7 +14,7 @@ The basic idea is:
 4) Stream inputs to the LLM to render the game in real time
 5) Ignore the actual output, who cares about the text? we only care about the internals.
 
-This is a DS \ AI approach, I did not implement any game logic or graphics geometry due to lack of knowledge and uncertainty about hypothesis weather or not internal activations are locally correlated or can act as an environment.
+This is a DS \ AI approach, I did not implement any game logic or graphics geometry due to lack of knowledge and uncertainty about hypothesis whether internal activations are locally correlated or can act as an environment.
 
 ```text
 real ViZDoom frame
@@ -84,12 +84,11 @@ Detailed experiment decisions, measurements, and limitations are recorded in
 From PowerShell in the repository root:
 
 ```powershell
-$py = "path\to\python\python\python.exe"
-$env:PYTHONPATH = (Resolve-Path ".deps").Path + ";" + (Resolve-Path "src").Path
-$env:HF_HOME = (Resolve-Path ".").Path + "\.hf_cache"
-$env:MPLCONFIGDIR = (Resolve-Path ".").Path + "\.mplconfig"
-
-& $py -m activation_doom.presentation
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+$env:PYTHONPATH="src"
+python -m activation_doom.presentation
 ```
 
 The default presentation replays:
@@ -277,19 +276,19 @@ below `data/`.
 
 ## Future work
 
-I am currently exploring a few direction to enhance the project and some research directions as well.
+I am currently exploring a few directions to enhance the project and some research directions as well.
 Game enhancements:
 1) Use the rest of the hidden state to render higher resolution.
 2) Use the rest of the hidden state to render color frames.
-3) Multi Frane Generation: use other layers to generate the frame multiple time for upscaling
+3) Multi Frane Generation: use other layers to generate the frame multiple times for upscaling
 
 Future research directions:
 1) Can latent space hold information about a state?
 2) Definition of regions in the input space that are locally correlated in the latent space.
 
 ## AI usage disclaimer
-I used Codex to implement some of the code in this repository including some of the text in this README.
-Mostly the things I did not know how to implement and I wanted to learn how to implement them.
-I also used ChatGPT to help with brainstorming some ideas and experiments.
-I did not use any AI to conduct the experiments or design the system.
-I did not use any AI to conduct the research.
+AI-assisted coding (Codex) was used.
+
+AI was not used for:
+
+Research questions, experimental design, execution, validation and interpretation.
