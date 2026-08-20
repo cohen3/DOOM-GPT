@@ -84,7 +84,7 @@ Detailed experiment decisions, measurements, and limitations are recorded in
 From PowerShell in the repository root:
 
 ```powershell
-$py = "C:\Users\eladc\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
+$py = "path\to\python\python\python.exe"
 $env:PYTHONPATH = (Resolve-Path ".deps").Path + ";" + (Resolve-Path "src").Path
 $env:HF_HOME = (Resolve-Path ".").Path + "\.hf_cache"
 $env:MPLCONFIGDIR = (Resolve-Path ".").Path + "\.mplconfig"
