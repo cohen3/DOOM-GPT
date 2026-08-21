@@ -1,7 +1,7 @@
 # DOOM-GPT: DOOM Rendered in GPT Internal Activations
 
 ![ActivationDoom presentation demo](docs/assets/activation_doom_demo.gif)
-![chainsaw demo](docs/assets/doomgpt2.gif)
+
 ## Can it run Doom? LLM internal activations
 
 
